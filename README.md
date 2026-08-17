@@ -1,23 +1,29 @@
-# 🚀 next-ai-toolkit
+# 🛡️ next-ai-toolkit
 
 <p align="center">
   <img src="https://img.shields.io/badge/TypeScript-5.5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Zero%20Dependencies-Lightweight-10B981?style=for-the-badge" alt="Zero Dependencies" />
+  <img src="https://img.shields.io/badge/Reliability-Circuit%20Breaker%20%2B%20Backoff-10B981?style=for-the-badge" alt="Reliability" />
   <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI/CD" />
+  <img src="https://img.shields.io/badge/Coverage-100%25%20Vitest-FF5722?style=for-the-badge&logo=vitest&logoColor=white" alt="Testing" />
   <img src="https://img.shields.io/badge/License-MIT-F59E0B?style=for-the-badge" alt="License" />
 </p>
 
-A production-ready, ultra-lightweight TypeScript toolkit for building resilient AI-powered applications in **Next.js** (App Router & Server Actions) and **Node.js**.
+A production-oriented AI reliability & orchestration toolkit for TypeScript, **Next.js** (App Router & Server Actions), and **Node.js** applications.
+
+Instead of wrapping simple API calls, `next-ai-toolkit` solves hard production operational challenges: **multi-provider failover cascades**, **exponential backoff with jitter**, **circuit breakers for rate-limited endpoints**, **sub-millisecond token cost telemetry**, and **resilient SSE streaming**.
 
 ---
 
-## ✨ Features
+## ⚡ Core Capabilities
 
-- 🔄 **Multi-Provider Resilient Failover:** Automatically cascade prompt execution across multiple LLM providers (Gemini, OpenAI, Mistral, Anthropic) if a provider hits rate-limits, timeouts, or network degradation.
-- ⚡ **Stream SSE Transformers:** Standardize raw asynchronous generators into production-grade Server-Sent Events (`text/event-stream`).
-- 💰 **Token & Cost Telemetry:** Real-time token estimation and exact USD financial cost calculation across all major LLM models.
-- 📝 **Type-Safe Prompt Builder:** Clean interpolation of runtime variables with template system prompts.
-- 🧪 **100% Tested:** Comprehensive test suite powered by Vitest and GitHub Actions CI matrix testing.
+- 🔄 **Multi-Provider Failover Orchestrator:** Seamless cascade routing across Google Gemini, OpenAI, Mistral, Anthropic, and DeepSeek when upstream providers degrade or rate-limit.
+- 🛑 **Integrated Circuit Breakers:** Prevents cascading latency spikes by automatically isolating broken or rate-limited model endpoints.
+- ⏳ **Exponential Backoff with Full Jitter:** Prevents thundering herd problems on retries with strict respect for `Retry-After` headers.
+- ⚡ **AbortController & Timeout Support:** Cancel in-flight LLM requests and long sleep delays cleanly upon client disconnects.
+- 📊 **Telemetry & Observability Hooks:** Capture `onAttempt`, `onFailover`, `onSuccess`, and `onCircuitOpen` events for Datadog, Sentry, or custom logs.
+- 💰 **2026 Model Pricing & Cost Estimation:** Accurate sub-cent USD cost calculation for prompt and completion tokens.
+- 📡 **Server-Sent Events (SSE) Stream Transformer:** Standardize async chunk generators into robust `text/event-stream` responses with configurable keepalive heartbeats.
+- 🧪 **Deterministic Mock Provider:** Unit-test your complex AI pipelines without touching live API keys or spending cloud credits.
 
 ---
 
@@ -35,56 +41,45 @@ yarn add @vitalikdeve/next-ai-toolkit
 
 ## 🚀 Quick Start
 
-### 1. Resilient Multi-Provider Failover Orchestrator
+### 1. Resilient Failover with Circuit Breakers & Backoff
 
 ```typescript
-import { ResilientAIOrchestrator } from '@vitalikdeve/next-ai-toolkit';
+import { ResilientAIOrchestrator, RateLimitError } from '@vitalikdeve/next-ai-toolkit';
 
 const orchestrator = new ResilientAIOrchestrator([
   {
-    model: { id: 'gemini-2.0-flash', name: 'Gemini Flash', provider: 'google', maxTokens: 8192 },
-    handler: async (prompt) => {
-      // Call Google Gemini API
-      return await callGemini(prompt);
-    }
+    model: { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'google' },
+    handler: async (prompt, options) => {
+      // Primary fast provider
+      return await callGoogleGemini(prompt, options?.signal);
+    },
+    circuitBreakerOptions: { failureThreshold: 3, recoveryTimeMs: 15000 }
   },
   {
-    model: { id: 'mistral-large', name: 'Mistral Large', provider: 'mistral', maxTokens: 4096 },
-    handler: async (prompt) => {
-      // Automatic fallback if Gemini encounters rate-limits or network errors
-      return await callMistral(prompt);
+    model: { id: 'mistral-large', name: 'Mistral Large', provider: 'mistral' },
+    handler: async (prompt, options) => {
+      // Automatic fallback if Gemini hits rate limits (429) or timeouts
+      return await callMistralAI(prompt, options?.signal);
     }
   }
 ]);
 
-const response = await orchestrator.executeWithFallback('Analyze resume keywords', {
-  timeoutMs: 8000,
-  maxRetries: 1
+const result = await orchestrator.executeWithFallback('Analyze resume for ATS compliance', {
+  timeoutMs: 6000,
+  retryPolicy: { maxRetries: 2, initialDelayMs: 200, jitter: true },
+  hooks: {
+    onFailover: (from, to, reason) => console.warn(`🔄 Failover: ${from.name} -> ${to.name} (${reason.message})`),
+    onAttemptSuccess: (model, durationMs) => console.log(`✅ Success via ${model.name} in ${durationMs}ms`)
+  }
 });
 
-console.log(response.content);
-console.log(`Executed by: ${response.usedModelId} in ${response.durationMs}ms`);
+console.log('Result:', result.content);
+console.log('Total Cost:', `$${result.estimatedCost.totalCost} USD`);
 ```
 
 ---
 
-### 2. Token & USD Cost Estimator
-
-```typescript
-import { TokenCostEstimator } from '@vitalikdeve/next-ai-toolkit';
-
-const prompt = "Please optimize this software engineer resume for ATS systems...";
-const promptTokens = TokenCostEstimator.estimateTokens(prompt);
-const completionTokens = 450;
-
-const cost = TokenCostEstimator.calculateCost('gpt-4o-mini', promptTokens, completionTokens);
-
-console.log(`Estimated Total Cost: $${cost.totalCost} USD`);
-```
-
----
-
-### 3. Server-Sent Events (SSE) Streaming in Next.js App Router
+### 2. Next.js App Router SSE Streaming with Heartbeats
 
 ```typescript
 // app/api/ai/stream/route.ts
@@ -94,21 +89,53 @@ export async function POST(req: Request) {
   const { prompt } = await req.json();
 
   async function* generateChunks() {
-    yield "Analyzing candidate experience...";
-    yield "Calculating ATS compatibility score...";
-    yield "Optimization complete!";
+    yield 'Analyzing professional summary...\n';
+    yield 'Evaluating keyword density...\n';
+    yield 'ATS Score: 96/100.\n';
   }
 
-  const sseStream = AIStreamTransformer.createSSEStream(generateChunks(), 'gemini-2.0-flash', 'google');
+  const sseStream = AIStreamTransformer.createSSEStream(
+    generateChunks(),
+    'gemini-2.0-flash',
+    'google',
+    { heartbeatIntervalMs: 15000, signal: req.signal }
+  );
 
   return new Response(sseStream, {
     headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive'
     }
   });
 }
+```
+
+---
+
+### 3. Deterministic Testing with Mock Providers
+
+```typescript
+import { ResilientAIOrchestrator, createMockProvider } from '@vitalikdeve/next-ai-toolkit';
+import { it, expect } from 'vitest';
+
+it('should test failover without real API calls', async () => {
+  const primary = createMockProvider(
+    { id: 'gemini', name: 'Gemini', provider: 'google' },
+    { failTimes: 1, failureError: new Error('Rate limit (429)') }
+  );
+
+  const fallback = createMockProvider(
+    { id: 'mistral', name: 'Mistral', provider: 'mistral' },
+    { responses: ['Mocked Success Response'] }
+  );
+
+  const orchestrator = new ResilientAIOrchestrator([primary.registration, fallback.registration]);
+  const result = await orchestrator.executeWithFallback('Test', { retryPolicy: { maxRetries: 0 } });
+
+  expect(result.content).toBe('Mocked Success Response');
+  expect(result.usedModel.id).toBe('mistral');
+});
 ```
 
 ---

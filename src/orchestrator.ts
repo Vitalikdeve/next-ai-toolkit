@@ -1,73 +1,181 @@
-import { ExecutionOptions, ProviderRegistration } from './types.js';
+import {
+  ProviderRegistration,
+  ExecutionOptions,
+  ExecutionResult,
+  ModelConfig
+} from './types.js';
+import {
+  AIError,
+  TimeoutError,
+  CancellationError,
+  AllProvidersFailedError,
+  AttemptRecord,
+  RateLimitError
+} from './errors.js';
+import { CircuitBreaker } from './circuit-breaker.js';
+import { calculateBackoffDelay, sleepWithSignal, DEFAULT_RETRY_POLICY } from './backoff.js';
+import { TokenCostEstimator } from './cost-estimator.js';
 
-export interface OrchestratorResult {
-  content: string;
-  usedModelId: string;
-  usedProvider: string;
-  attemptsCount: number;
-  durationMs: number;
+interface ProviderEntry {
+  registration: ProviderRegistration;
+  circuitBreaker: CircuitBreaker;
 }
 
 export class ResilientAIOrchestrator {
-  private providers: ProviderRegistration[] = [];
+  private entries: ProviderEntry[] = [];
 
   constructor(providers: ProviderRegistration[] = []) {
-    this.providers = providers;
+    providers.forEach(p => this.registerProvider(p));
   }
 
   registerProvider(provider: ProviderRegistration): this {
-    this.providers.push(provider);
+    this.entries.push({
+      registration: provider,
+      circuitBreaker: new CircuitBreaker(provider.circuitBreakerOptions)
+    });
     return this;
   }
 
-  async executeWithFallback(prompt: string, options: ExecutionOptions = {}): Promise<OrchestratorResult> {
-    if (this.providers.length === 0) {
-      throw new Error('No AI providers registered in ResilientAIOrchestrator.');
+  getProviders(): ModelConfig[] {
+    return this.entries.map(e => e.registration.model);
+  }
+
+  async executeWithFallback(prompt: string, options: ExecutionOptions = {}): Promise<ExecutionResult> {
+    if (this.entries.length === 0) {
+      throw new AIError('No AI providers registered in ResilientAIOrchestrator.');
     }
 
-    const startTime = Date.now();
-    const maxRetries = options.maxRetries ?? 1;
-    const errors: Array<{ model: string; error: any }> = [];
+    if (options.signal?.aborted) {
+      throw new CancellationError();
+    }
 
-    for (let i = 0; i < this.providers.length; i++) {
-      const current = this.providers[i];
-      let retryCount = 0;
+    const overallStartTime = Date.now();
+    const attempts: AttemptRecord[] = [];
+    const retryPolicy = { ...DEFAULT_RETRY_POLICY, ...options.retryPolicy };
+    const hooks = options.hooks;
 
-      while (retryCount <= maxRetries) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const entry = this.entries[i];
+      const model = entry.registration.model;
+      const circuit = entry.circuitBreaker;
+
+      // Skip provider if circuit breaker is OPEN
+      if (!circuit.isAvailable()) {
+        hooks?.onCircuitOpen?.(model);
+        continue;
+      }
+
+      let attemptInProvider = 0;
+
+      while (attemptInProvider <= retryPolicy.maxRetries) {
+        attemptInProvider++;
+        const attemptStartTime = Date.now();
+
+        if (options.signal?.aborted) {
+          throw new CancellationError(undefined, { modelId: model.id, provider: model.provider });
+        }
+
+        hooks?.onAttemptStart?.(model, attemptInProvider);
+
         try {
-          const timeoutPromise = options.timeoutMs
-            ? new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error(`Timeout after ${options.timeoutMs}ms`)), options.timeoutMs)
-              )
-            : null;
+          // Execute with timeout if requested
+          const timeoutMs = options.timeoutMs;
+          const handlerPromise = entry.registration.handler(prompt, options);
 
-          const executionPromise = current.handler(prompt, options);
+          let content: string;
 
-          const result = timeoutPromise
-            ? await Promise.race([executionPromise, timeoutPromise])
-            : await executionPromise;
+          if (timeoutMs && timeoutMs > 0) {
+            let timerId: any;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timerId = setTimeout(() => {
+                reject(new TimeoutError(timeoutMs, { modelId: model.id, provider: model.provider }));
+              }, timeoutMs);
+            });
+
+            try {
+              content = await Promise.race([handlerPromise, timeoutPromise]);
+            } finally {
+              clearTimeout(timerId);
+            }
+          } else {
+            content = await handlerPromise;
+          }
+
+          const durationMs = Date.now() - attemptStartTime;
+          circuit.recordSuccess();
+          hooks?.onAttemptSuccess?.(model, durationMs, attemptInProvider);
+          hooks?.onCircuitClose?.(model);
+
+          attempts.push({
+            modelId: model.id,
+            provider: model.provider,
+            attemptNumber: attemptInProvider,
+            durationMs,
+            success: true
+          });
+
+          // Telemetry and token estimation
+          const promptTokens = TokenCostEstimator.estimateTokens(prompt);
+          const completionTokens = TokenCostEstimator.estimateTokens(content);
+          const cost = TokenCostEstimator.calculateCost(model.id, promptTokens, completionTokens, model.pricing);
 
           return {
-            content: result,
-            usedModelId: current.model.id,
-            usedProvider: current.model.provider,
-            attemptsCount: errors.length + retryCount + 1,
-            durationMs: Date.now() - startTime
+            content,
+            usedModel: model,
+            totalDurationMs: Date.now() - overallStartTime,
+            attempts,
+            estimatedTokens: {
+              prompt: promptTokens,
+              completion: completionTokens,
+              total: promptTokens + completionTokens
+            },
+            estimatedCost: cost
           };
-        } catch (err) {
-          retryCount++;
-          if (retryCount > maxRetries) {
-            errors.push({ model: current.model.id, error: err });
+        } catch (rawError: any) {
+          const durationMs = Date.now() - attemptStartTime;
+          const error: Error = rawError instanceof Error ? rawError : new Error(String(rawError));
+
+          attempts.push({
+            modelId: model.id,
+            provider: model.provider,
+            attemptNumber: attemptInProvider,
+            durationMs,
+            success: false,
+            error
+          });
+
+          hooks?.onAttemptError?.(model, error, attemptInProvider);
+
+          if (error instanceof CancellationError || options.signal?.aborted) {
+            throw error;
+          }
+
+          // If max retries reached for this provider, trip breaker if needed & failover
+          if (attemptInProvider > retryPolicy.maxRetries) {
+            circuit.recordFailure();
+
+            const nextEntry = this.entries[i + 1];
+            if (nextEntry) {
+              hooks?.onFailover?.(model, nextEntry.registration.model, error);
+            }
             break;
+          }
+
+          // Calculate delay with backoff + jitter
+          let delayMs = calculateBackoffDelay(attemptInProvider, retryPolicy);
+          if (error instanceof RateLimitError && error.retryAfterMs) {
+            delayMs = Math.max(delayMs, error.retryAfterMs);
+          }
+
+          try {
+            await sleepWithSignal(delayMs, options.signal);
+          } catch (cancelErr) {
+            throw cancelErr;
           }
         }
       }
     }
 
-    throw new Error(
-      `All AI providers failed. Tried ${this.providers.length} models. Errors: ${JSON.stringify(
-        errors.map(e => ({ model: e.model, message: (e.error as Error)?.message || String(e.error) }))
-      )}`
-    );
+    throw new AllProvidersFailedError(attempts);
   }
 }
