@@ -4,37 +4,42 @@
   <img src="https://img.shields.io/badge/TypeScript-5.5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Reliability-Circuit%20Breaker%20%2B%20Backoff-10B981?style=for-the-badge" alt="Reliability" />
   <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI/CD" />
-  <img src="https://img.shields.io/badge/Coverage-100%25%20Vitest-FF5722?style=for-the-badge&logo=vitest&logoColor=white" alt="Testing" />
-  <img src="https://img.shields.io/badge/License-MIT-F59E0B?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/Version-v0.1.0--preview-F59E0B?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/License-MIT-gray?style=for-the-badge" alt="License" />
 </p>
 
 A production-oriented AI reliability & orchestration toolkit for TypeScript, **Next.js** (App Router & Server Actions), and **Node.js** applications.
 
-Instead of wrapping simple API calls, `next-ai-toolkit` solves hard production operational challenges: **multi-provider failover cascades**, **exponential backoff with jitter**, **circuit breakers for rate-limited endpoints**, **sub-millisecond token cost telemetry**, and **resilient SSE streaming**.
+Instead of wrapping raw API calls, `next-ai-toolkit` provides resilience patterns for real-world AI applications: **multi-provider failover cascades**, **exponential backoff with jitter**, **circuit breakers for rate-limited endpoints**, **sub-cent token cost telemetry**, and **resilient SSE streaming**.
 
 ---
 
-## ⚡ Core Capabilities
+## ⚡ Core Features
 
-- 🔄 **Multi-Provider Failover Orchestrator:** Seamless cascade routing across Google Gemini, OpenAI, Mistral, Anthropic, and DeepSeek when upstream providers degrade or rate-limit.
-- 🛑 **Integrated Circuit Breakers:** Prevents cascading latency spikes by automatically isolating broken or rate-limited model endpoints.
+- 🔄 **Multi-Provider Failover Cascades:** Automatic fallback routing across Google Gemini, OpenAI, Mistral, Anthropic, and DeepSeek when upstream models encounter rate limits or transient network errors.
+- 🛑 **Integrated Circuit Breakers:** Prevents cascading latency spikes by automatically isolating broken or rate-limited endpoints (`CLOSED` → `OPEN` → `HALF_OPEN`).
 - ⏳ **Exponential Backoff with Full Jitter:** Prevents thundering herd problems on retries with strict respect for `Retry-After` headers.
 - ⚡ **AbortController & Timeout Support:** Cancel in-flight LLM requests and long sleep delays cleanly upon client disconnects.
 - 📊 **Telemetry & Observability Hooks:** Capture `onAttempt`, `onFailover`, `onSuccess`, and `onCircuitOpen` events for Datadog, Sentry, or custom logs.
-- 💰 **2026 Model Pricing & Cost Estimation:** Accurate sub-cent USD cost calculation for prompt and completion tokens.
-- 📡 **Server-Sent Events (SSE) Stream Transformer:** Standardize async chunk generators into robust `text/event-stream` responses with configurable keepalive heartbeats.
-- 🧪 **Deterministic Mock Provider:** Unit-test your complex AI pipelines without touching live API keys or spending cloud credits.
+- 💰 **Token Cost Telemetry:** Real-time token estimation and USD financial cost calculation across popular models.
+- 📡 **SSE Stream Transformer:** Convert async generators into robust `text/event-stream` responses with configurable keepalive heartbeats.
+- 🧪 **Deterministic Mock Provider:** Unit-test complex AI pipelines without touching live API keys or spending cloud credits.
 
 ---
 
 ## 📦 Installation
 
+> **Developer Preview (v0.1.0):** Available directly via GitHub repository.
+
 ```bash
-npm install @vitalikdeve/next-ai-toolkit
-# or
-pnpm add @vitalikdeve/next-ai-toolkit
-# or
-yarn add @vitalikdeve/next-ai-toolkit
+# Install directly from GitHub
+npm install github:Vitalikdeve/next-ai-toolkit
+
+# Or clone and link locally for development
+git clone https://github.com/Vitalikdeve/next-ai-toolkit.git
+cd next-ai-toolkit
+npm install
+npm run build
 ```
 
 ---
@@ -50,7 +55,7 @@ const orchestrator = new ResilientAIOrchestrator([
   {
     model: { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'google' },
     handler: async (prompt, options) => {
-      // Primary fast provider
+      // Primary provider
       return await callGoogleGemini(prompt, options?.signal);
     },
     circuitBreakerOptions: { failureThreshold: 3, recoveryTimeMs: 15000 }
@@ -91,7 +96,7 @@ export async function POST(req: Request) {
   async function* generateChunks() {
     yield 'Analyzing professional summary...\n';
     yield 'Evaluating keyword density...\n';
-    yield 'ATS Score: 96/100.\n';
+    yield 'ATS Score calculated.\n';
   }
 
   const sseStream = AIStreamTransformer.createSSEStream(
