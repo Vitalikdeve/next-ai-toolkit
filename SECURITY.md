@@ -8,5 +8,5 @@ Only the latest major version is supported for security updates.
 | 1.0.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
-If you discover a security issue, please email vitalikzelianko@gmail.com.
+If you discover a security issue, please email VitaliZelianko@vitocv.com.
 Do not open public GitHub issues for security vulnerabilities.
