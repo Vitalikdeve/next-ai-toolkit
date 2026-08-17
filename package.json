@@ -1,0 +1,35 @@
+{
+  "name": "@vitalikdeve/next-ai-toolkit",
+  "version": "1.0.0",
+  "description": "Production-ready, lightweight TypeScript toolkit for multi-provider AI streaming, resilient LLM failovers, and token cost telemetry in Next.js & Node.js",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "nextjs",
+    "ai",
+    "llm",
+    "openai",
+    "gemini",
+    "mistral",
+    "anthropic",
+    "streaming",
+    "failover",
+    "tokens",
+    "typescript"
+  ],
+  "author": "Vitalik Zelianko (https://github.com/Vitalikdeve)",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.5.4",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.1"
+  }
+}
